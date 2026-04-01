@@ -149,7 +149,9 @@ def download(url, output, timeout, quality, file_path, parallel, retries, no_inf
                 print(f"\n  {G}All tracks downloaded successfully!{N}")
                 break
             
-            failed_count = r.failed if r.failed else (58 - r.completed - r.skipped if hasattr(r, 'completed') else 0)
+            failed_count = getattr(r, 'failed', 0)
+            if failed_count is None:
+                failed_count = 0
             print(f"\n  {Y}{failed_count} tracks failed, will retry...{N}")
         
         if embed_metadata and r.success:
@@ -163,7 +165,7 @@ def download(url, output, timeout, quality, file_path, parallel, retries, no_inf
             from lucida_simple import fetch_album_lyrics
             album_path = Path(r.filepath) if r.filepath else Path(out)
             print(f"\n  {C}Fetching lyrics from lyrics.ovh...{N}")
-            count = fetch_album_lyrics(album_path, "HOYO-MiX")
+            count = fetch_album_lyrics(album_path)
             print(f"  {G}Got lyrics for {count} tracks{N}")
         
         return

@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
 """Lucida Flow - Music Downloader for Tidal, Qobuz, Spotify & more"""
 
-import os, sys, time, re, json
+import os, sys, time, re, json, unicodedata, threading
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List, Dict
+
+
+def normalize_text(s):
+    """Normalize text for filename matching - removes special chars and normalizes unicode"""
+    s = s.lower()
+    s = unicodedata.normalize('NFKD', s)
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = s.replace(' ', '').replace('-', '').replace('_', '').replace("'", '')
+    s = s.replace('&', '').replace('.', '').replace(',', '').replace('(', '').replace(')', '')
+    s = s.replace('!', '').replace('?', '').replace('#', '').replace('@', '').replace('$', '')
+    return s
 
 try:
     from tqdm import tqdm
@@ -41,6 +52,63 @@ BANNER = f"""
    ║  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ║
    ╚══════════════════════════════════════════════╝
 {N}"""
+
+
+class BrowserManager:
+    """Singleton browser manager for reuse across downloads (thread-safe)"""
+    _instance = None
+    _lock = threading.Lock()
+    _browser = None
+    _playwright = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def get_browser(self):
+        """Get or create browser instance"""
+        with self._lock:
+            if self._browser is None or not self._browser.is_connected():
+                from playwright.sync_api import sync_playwright
+                self._playwright = sync_playwright().start()
+                self._browser = self._playwright.chromium.launch(
+                    headless=True,
+                    args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox']
+                )
+            return self._browser
+    
+    def new_context(self, **kwargs):
+        """Create new context with default settings"""
+        browser = self.get_browser()
+        defaults = {
+            'accept_downloads': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+        defaults.update(kwargs)
+        return browser.new_context(**defaults)
+    
+    def close(self):
+        """Close browser and stop playwright"""
+        with self._lock:
+            if self._browser:
+                try:
+                    self._browser.close()
+                except:
+                    pass
+                self._browser = None
+            if self._playwright:
+                try:
+                    self._playwright.stop()
+                except:
+                    pass
+                self._playwright = None
+
+
+browser_manager = BrowserManager()
+
 
 def p(msg, s="i"):
     icons = {"i": f"{C}*{N}", "s": f"{G}+{N}", "w": f"{Y}!{N}", "e": f"{R}x{N}", "d": f"{M}>{N}"}
@@ -771,23 +839,12 @@ def save_album_manifest(album_dir, manifest, album_url=None, album_name=None):
 
 def file_matches_track(existing_files, track_title, track_url, track_index=None):
     """Check if a track matches any existing file"""
-    import unicodedata
-    
     track_id = track_url.split('/')[-1]
     
-    def normalize(s):
-        s = s.lower()
-        s = unicodedata.normalize('NFKD', s)
-        s = ''.join(c for c in s if not unicodedata.combining(c))
-        s = s.replace(' ', '').replace('-', '').replace('_', '').replace("'", '')
-        s = s.replace('&', '').replace('.', '').replace(',', '').replace('(', '').replace(')', '')
-        s = s.replace('!', '').replace('?', '').replace('#', '').replace('@', '').replace('$', '')
-        return s
-    
-    clean_title = normalize(track_title)
+    clean_title = normalize_text(track_title)
     
     for filename in existing_files:
-        clean_file = normalize(filename)
+        clean_file = normalize_text(filename)
         
         if track_id in filename or track_id in filename.replace('-', ''):
             return True
@@ -834,19 +891,8 @@ def build_manifest_from_files(album_dir, tracks):
 
 def calculate_filename_similarity(filename, track_title):
     """Calculate similarity score between filename and track title"""
-    import unicodedata
-    
-    def normalize(s):
-        s = s.lower()
-        s = unicodedata.normalize('NFKD', s)
-        s = ''.join(c for c in s if not unicodedata.combining(c))
-        s = s.replace(' ', '').replace('-', '').replace('_', '').replace("'", '')
-        s = s.replace('&', '').replace('.', '').replace(',', '').replace('(', '').replace(')', '')
-        s = s.replace('!', '').replace('?', '').replace('#', '').replace('@', '').replace('$', '')
-        return s
-    
-    clean_file = normalize(filename)
-    clean_title = normalize(track_title)
+    clean_file = normalize_text(filename)
+    clean_title = normalize_text(track_title)
     
     if not clean_title or clean_title == 'track' or 'track' in clean_title.lower():
         return 0
@@ -961,12 +1007,16 @@ def fetch_lyrics_from_api(artist, title):
     return None
 
 
-def fetch_album_lyrics(album_dir, artist_name):
+def fetch_album_lyrics(album_dir, artist_name=None):
     """Fetch lyrics for all tracks in album folder"""
     import requests
+    
     manifest = get_album_manifest(album_dir)
     if not manifest:
         return 0
+    
+    if artist_name is None:
+        artist_name = album_dir.name.split(' - ')[0] if ' - ' in album_dir.name else "Unknown Artist"
     
     count = 0
     for track_url, data in manifest.items():
@@ -978,7 +1028,9 @@ def fetch_album_lyrics(album_dir, artist_name):
         if not filepath.exists():
             continue
         
-        track_name = filepath.stem.replace(f"{artist_name} - ", "").strip()
+        track_name = filepath.stem
+        if track_name.startswith(f"{artist_name} - "):
+            track_name = track_name.replace(f"{artist_name} - ", "").strip()
         
         lyrics = fetch_lyrics_from_api(artist_name, track_name)
         if lyrics:
@@ -1160,7 +1212,7 @@ def lucida_download_album(url, out, quality="best", timeout=300, parallel=2, ret
         pw.stop()
         return DownloadResult(success=True, filepath=str(album_dir), size=0)
     
-    print(f"  {C}↓ Downloading {len(to_download)} tracks with {parallel} workers{N}\n")
+    print(f"  {C}[Downloading {len(to_download)} tracks with {parallel} workers]{N}\n")
     
     from concurrent.futures import ThreadPoolExecutor, as_completed
     
@@ -1205,10 +1257,6 @@ def lucida_download_album(url, out, quality="best", timeout=300, parallel=2, ret
     downloaded = sum(1 for s in progress.status if s == 'done')
     skipped = sum(1 for s in progress.status if s == 'skipped')
     
-    # Cleanup
-    browser.close()
-    pw.stop()
-    
     result_path = str(album_dir)
     zip_path = None
     
@@ -1234,8 +1282,6 @@ def download_single_track_worker(args):
     """Worker function for parallel track download"""
     i, track, album_dir, timeout, retries, existing_files = args
     
-    from playwright.sync_api import sync_playwright
-    
     track_url = track['url']
     track_name = track.get('title', f'Track {i+1}')
     result = {'index': i, 'success': False, 'filename': None, 'size': 0, 'error': None, 'url': track_url}
@@ -1253,6 +1299,7 @@ def download_single_track_worker(args):
                 else:
                     print(f"\n  {Y}!{N} Corrupted existing: {fname} - will re-download")
     
+    from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
     browser = pw.chromium.launch(
         headless=True,
