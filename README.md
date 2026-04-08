@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="lucida_flow.png" alt="Lucida Flow Logo" width="600"/>
+  <img src="lucida_flow.png" alt="Meloflow Logo" width="600"/>
   
-  # Lucida Flow
+  # Meloflow
   
   A powerful CLI tool for downloading high-quality music from Tidal, Qobuz, and more via [Lucida.to](https://lucida.to).
   
@@ -181,28 +181,28 @@ MIT License
 ### Download Albums & Tracks
 ```bash
 # Download an album (simplest)
-lucida-flow download https://tidal.com/album/123456
+meloflow download https://tidal.com/album/123456
 
 # Download to a specific folder
-lucida-flow download https://tidal.com/album/123456 -o ~/Music
+meloflow download https://tidal.com/album/123456 -o ~/Music
 
 # Download with faster speed (4 tracks at once)
-lucida-flow download https://tidal.com/album/123456 -p 4
+meloflow download https://tidal.com/album/123456 -p 4
 
 # Multi-disc album (e.g., 2 CDs)
-lucida-flow download https://tidal.com/album/123456 --discs 2
+meloflow download https://tidal.com/album/123456 --discs 2
 
 # Download with extra options
-lucida-flow download URL --zip --embed-metadata --verify
+meloflow download URL --zip --embed-metadata --verify
 ```
 
 ### Sort & Organize
 ```bash
 # Sort tracks in album order
-lucida-flow sort "~/Music/Album Name"
+meloflow sort "~/Music/Album Name"
 
 # Sort with track numbers in filenames
-lucida-flow sort "~/Music/Album Name" --prefix
+meloflow sort "~/Music/Album Name" --prefix
 # Result: "01 - Artist - Song.flac", "02 - Artist - Song.flac"
 
 # Multi-disc: "1-01 - Song.flac", "2-01 - Song.flac"
@@ -211,24 +211,24 @@ lucida-flow sort "~/Music/Album Name" --prefix
 ### Fix & Verify
 ```bash
 # Check all albums for corrupted files
-lucida-flow verify
+meloflow verify
 
 # Check specific folder
-lucida-flow verify -o ~/Music
+meloflow verify -o ~/Music
 
 # Fix track order if downloaded wrong
-lucida-flow fix-order https://tidal.com/album/123456
+meloflow fix-order https://tidal.com/album/123456
 
 # Fix multi-disc album
-lucida-flow fix-order https://tidal.com/album/123456 --discs 2
+meloflow fix-order https://tidal.com/album/123456 --discs 2
 ```
 
 ### Other Commands
 ```bash
-lucida-flow history      # See what you've downloaded
-lucida-flow services     # List supported streaming services
-lucida-flow config       # Show current settings
-lucida-flow --help       # Full help with all options
+meloflow history      # See what you've downloaded
+meloflow services     # List supported streaming services
+meloflow config       # Show current settings
+meloflow --help       # Full help with all options
 ```
 
 ### Common Download Options
@@ -264,7 +264,7 @@ Tracks are tracked in `.lucida_manifest.json` inside each album folder:
 
 ### Project Architecture
 ```
-lucida-flow/
+meloflow/
 ├── lucida_simple.py    # Core download logic (~1300 lines)
 │   ├── DownloadResult         # Result object with counts
 │   ├── lucida_download()      # Single track download

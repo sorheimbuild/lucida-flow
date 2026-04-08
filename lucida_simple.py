@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lucida Flow - Music Downloader for Tidal, Qobuz, Spotify & more"""
+"""Meloflow - Music Downloader for Tidal, Qobuz, Spotify & more"""
 
 import os, sys, time, re, json, unicodedata, threading
 from pathlib import Path
@@ -17,6 +17,98 @@ def normalize_text(s):
     s = s.replace('&', '').replace('.', '').replace(',', '').replace('(', '').replace(')', '')
     s = s.replace('!', '').replace('?', '').replace('#', '').replace('@', '').replace('$', '')
     return s
+
+
+STEALTH_SCRIPT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.navigator.chrome = { runtime: {} };
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+chrome.runtime && chrome.runtime.connect && chrome.runtime.connect();
+"""
+
+def apply_stealth(context):
+    """Inject stealth scripts to avoid detection"""
+    context.add_init_script(STEALTH_SCRIPT)
+
+
+SERVICES = {
+    'tidal': 'Tidal',
+    'qobuz': 'Qobuz', 
+    'soundcloud': 'Soundcloud',
+    'deezer': 'Deezer',
+    'amazon': 'Amazon Music',
+    'yandex': 'Yandex Music',
+}
+
+def search_lucida(query, service='tidal', country='US'):
+    """Search lucida.to for tracks and albums"""
+    from playwright.sync_api import sync_playwright
+    
+    pw = sync_playwright().start()
+    browser = pw.chromium.launch(headless=True, args=BROWSER_ARGS)
+    ctx = browser.new_context(
+        accept_downloads=True,
+        user_agent=USER_AGENT,
+    )
+    apply_stealth(ctx)
+    page = ctx.new_page()
+    
+    page.goto('https://lucida.to', wait_until='domcontentloaded', timeout=30000)
+    time.sleep(3)
+    
+    select = page.query_selector('select')
+    if select:
+        select.select_option(service)
+        time.sleep(1)
+    
+    search_input = page.query_selector('input[placeholder*="Search"]')
+    if not search_input:
+        browser.close()
+        pw.stop()
+        return []
+    
+    search_input.fill(query)
+    page.keyboard.press('Enter')
+    time.sleep(8)
+    
+    results = []
+    links = page.query_selector_all('a')
+    seen_urls = set()
+    
+    for link in links:
+        try:
+            href = link.get_attribute('href')
+            if not href or '/?' not in href:
+                continue
+            
+            text = link.inner_text().strip()
+            if not text or len(text) < 2:
+                continue
+            
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+            
+            full_url = 'https://lucida.to' + href
+            
+            is_album = '/album/' in href or '%2Falbum%2F' in href or '/browse/album/' in href
+            is_track = '/track/' in href or '%2Ftrack%2F' in href
+            
+            if is_album or is_track:
+                results.append({
+                    'type': 'Album' if is_album else 'Track',
+                    'title': text,
+                    'url': full_url,
+                    'href': href,
+                })
+        except:
+            continue
+    
+    browser.close()
+    pw.stop()
+    
+    return results
 
 try:
     from tqdm import tqdm
@@ -50,65 +142,11 @@ BANNER = f"""
    ║   {W}♥  Music Downloader  ♥{P}                 ║
    ║   {D}Tidal • Qobuz • Spotify • More{P}        ║
    ║  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ♫  ♪  ║
-   ╚══════════════════════════════════════════════╝
+    ╚══════════════════════════════════════════════╝
 {N}"""
 
-
-class BrowserManager:
-    """Singleton browser manager for reuse across downloads (thread-safe)"""
-    _instance = None
-    _lock = threading.Lock()
-    _browser = None
-    _playwright = None
-    
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    def get_browser(self):
-        """Get or create browser instance"""
-        with self._lock:
-            if self._browser is None or not self._browser.is_connected():
-                from playwright.sync_api import sync_playwright
-                self._playwright = sync_playwright().start()
-                self._browser = self._playwright.chromium.launch(
-                    headless=True,
-                    args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox']
-                )
-            return self._browser
-    
-    def new_context(self, **kwargs):
-        """Create new context with default settings"""
-        browser = self.get_browser()
-        defaults = {
-            'accept_downloads': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        defaults.update(kwargs)
-        return browser.new_context(**defaults)
-    
-    def close(self):
-        """Close browser and stop playwright"""
-        with self._lock:
-            if self._browser:
-                try:
-                    self._browser.close()
-                except:
-                    pass
-                self._browser = None
-            if self._playwright:
-                try:
-                    self._playwright.stop()
-                except:
-                    pass
-                self._playwright = None
-
-
-browser_manager = BrowserManager()
-
+BROWSER_ARGS = ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox']
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
 def p(msg, s="i"):
     icons = {"i": f"{C}*{N}", "s": f"{G}+{N}", "w": f"{Y}!{N}", "e": f"{R}x{N}", "d": f"{M}>{N}"}
@@ -568,8 +606,9 @@ def lucida_download(url, out, quality="best", timeout=300, info=True, retries=3,
         
         try:
             with sync_playwright() as pwr:
-                br = pwr.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox'])
-                ctx = br.new_context(accept_downloads=True, user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', viewport={'width': 1920, 'height': 1080})
+                br = pwr.chromium.launch(headless=True, args=BROWSER_ARGS)
+                ctx = br.new_context(accept_downloads=True, user_agent=USER_AGENT, viewport={'width': 1920, 'height': 1080})
+                apply_stealth(ctx)
                 pg = ctx.new_page()
                 
                 p(f"Loading...", "i")
@@ -958,11 +997,12 @@ def fix_album_track_order(album_dir, album_url, num_discs=None):
     existing_urls = set(manifest.keys())
     
     pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True, args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox'])
+    browser = pw.chromium.launch(headless=True, args=BROWSER_ARGS)
     context = browser.new_context(
         accept_downloads=True,
-        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        user_agent=USER_AGENT,
     )
+    apply_stealth(context)
     page = context.new_page()
     
     try:
@@ -1112,12 +1152,13 @@ def lucida_download_album(url, out, quality="best", timeout=300, parallel=2, ret
     pw = sync_playwright().start()
     browser = pw.chromium.launch(
         headless=True,
-        args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox']
+        args=BROWSER_ARGS
     )
     context = browser.new_context(
         accept_downloads=True,
-        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        user_agent=USER_AGENT,
     )
+    apply_stealth(context)
     page = context.new_page()
     
     p("Loading album page...", "i")
@@ -1303,12 +1344,13 @@ def download_single_track_worker(args):
     pw = sync_playwright().start()
     browser = pw.chromium.launch(
         headless=True,
-        args=['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox']
+        args=BROWSER_ARGS
     )
     context = browser.new_context(
         accept_downloads=True,
-        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        user_agent=USER_AGENT,
     )
+    apply_stealth(context)
     
     for attempt in range(1, retries + 1):
         try:

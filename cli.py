@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lucida Flow CLI"""
+"""Meloflow CLI"""
 
 import os, sys
 
@@ -24,16 +24,17 @@ def p(msg, color=""):
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="1.1.0", prog_name="lucida-flow")
+@click.version_option(version="2.0.0", prog_name="meloflow")
 def cli():
-    """Lucida Flow - Download music from Tidal, Qobuz & more"""
+    """Meloflow - Download music from Tidal, Qobuz & more"""
     print(BANNER)
     print(f"  {D}Download albums & tracks from streaming services{N}\n")
     print(f"  {C}Quick Start:{N}\n")
-    print(f"    {G}lucida-flow download{N} <url>                    Download an album")
-    print(f"    {G}lucida-flow download{N} <url> {D}-o ~/Music{R}        Download to folder")
-    print(f"    {G}lucida-flow sort{N} <folder> {D}--prefix{R}            Sort tracks with numbers\n")
-    print(f"  {C}For all commands:{N} {D}lucida-flow --help{N}\n")
+    print(f"    {G}meloflow download{N} <url>                    Download an album")
+    print(f"    {G}meloflow download{N} <url> {D}-o ~/Music{R}        Download to folder")
+    print(f"    {G}meloflow search{N} <query>                      Search for music")
+    print(f"    {G}meloflow sort{N} <folder> {D}--prefix{R}            Sort tracks with numbers\n")
+    print(f"  {C}For all commands:{N} {D}meloflow --help{N}\n")
 
 
 @cli.command()
@@ -234,6 +235,130 @@ def download(url, output, timeout, quality, file_path, parallel, retries, no_inf
 
 
 @cli.command()
+@click.argument("query", required=False)
+@click.option("-s", "--service", default="tidal", help="Music service to search")
+@click.option("-o", "--output", default=DEFAULT_OUTPUT, help="Download folder")
+@click.option("-p", "--parallel", default=4, help="Parallel downloads")
+def search(query, service, output, parallel):
+    """Search for music and download selected results
+    
+    Example:
+        meloflow search "Daft Punk"
+        meloflow search "Get Lucky" -s tidal
+    """
+    from lucida_simple import search_lucida, SERVICES, lucida_download, lucida_download_album
+    
+    print(f"\n  {C}Search Music{N}")
+    print(f"  {C}================{N}\n")
+    
+    if not query:
+        query = input(f"  {G}Enter search query:{N} ").strip()
+        if not query:
+            print(f"\n  {Y}No query entered{N}\n")
+            return
+    
+    print(f"  {D}Services:{N}")
+    service_list = list(SERVICES.items())
+    for i, (key, name) in enumerate(service_list, 1):
+        marker = " {D}(default){N}" if key == service else ""
+        print(f"    {G}{i}.{N} {name}{marker}")
+    
+    if service not in SERVICES:
+        try:
+            choice = input(f"\n  {G}Select service (1-{len(service_list)}): {N}").strip()
+            if choice:
+                idx = int(choice) - 1
+                if 0 <= idx < len(service_list):
+                    service = service_list[idx][0]
+        except ValueError:
+            pass
+    
+    print(f"\n  {C}Searching for: {B}{query}{N} on {SERVICES.get(service, service)}...")
+    
+    results = search_lucida(query, service=service)
+    
+    if not results:
+        print(f"\n  {Y}No results found{N}\n")
+        return
+    
+    print(f"\n  {G}Found {len(results)} results:{N}\n")
+    
+    albums = [r for r in results if r['type'] == 'Album']
+    tracks = [r for r in results if r['type'] == 'Track']
+    
+    print(f"  {C}Albums ({len(albums)}):{N}")
+    for i, r in enumerate(albums, 1):
+        print(f"    {G}{i}.{N} {B}{r['title']}{N}")
+    
+    print(f"\n  {C}Tracks ({len(tracks)}):{N}")
+    start_idx = len(albums)
+    for i, r in enumerate(tracks, start_idx + 1):
+        print(f"    {G}{i}.{N} {r['title']}")
+    
+    print(f"\n  {D}Enter numbers to download (e.g., 1,3,5 or 1-3 or 'a' for all albums, 't' for all tracks){N}")
+    choice = input(f"  {G}Your selection:{N} ").strip()
+    
+    if not choice:
+        return
+    
+    to_download = []
+    
+    if choice.lower() == 'a':
+        to_download = albums
+    elif choice.lower() == 't':
+        to_download = tracks
+    else:
+        all_results = albums + tracks
+        parts = choice.replace(',', ' ').split()
+        for part in parts:
+            if '-' in part:
+                start, end = part.split('-')
+                try:
+                    to_download.extend(all_results[int(start)-1:int(end)])
+                except: pass
+            else:
+                try:
+                    to_download.append(all_results[int(part)-1])
+                except: pass
+    
+    if not to_download:
+        print(f"\n  {Y}No valid selection{N}\n")
+        return
+    
+    print(f"\n  {C}Downloading {len(to_download)} items...{N}\n")
+    
+    os.makedirs(output, exist_ok=True)
+    completed, failed = 0, 0
+    
+    for item in to_download:
+        url = item['url']
+        is_album = item['type'] == 'Album'
+        
+        print(f"  {G}->{N} {item['title']} ({item['type']})")
+        
+        try:
+            if is_album:
+                result = lucida_download_album(url, output, parallel=parallel, create_zip=False)
+            else:
+                result = lucida_download(url, output)
+            
+            if result.success:
+                completed += 1
+                print(f"    {G}+ Downloaded{N}")
+            else:
+                failed += 1
+                print(f"    {R}x Failed{N}")
+        except Exception as e:
+            failed += 1
+            print(f"    {R}x Error: {e}{N}")
+    
+    print(f"\n  {C}========================================{N}")
+    print(f"  {G}+ Completed: {completed}{N}")
+    if failed: print(f"  {R}x Failed: {failed}{N}")
+    print()
+
+
+@cli.command()
 def history():
     """Show download history"""
     from lucida_simple import show_history
@@ -254,7 +379,7 @@ def services():
 def config():
     """Show configuration"""
     print(f"\n  {B}{C}Configuration:{N}\n")
-    cd = Path.home()/".lucida-flow"
+    cd = Path.home()/".meloflow"
     print(f"  {C}*{N} Config: {cd}")
     print(f"  {C}*{N} Output: {os.path.abspath(DEFAULT_OUTPUT)}")
     h = load_history()
@@ -268,8 +393,8 @@ def sort(folder, prefix):
     """Sort album tracks in correct order
     
     Example:
-        lucida-flow sort "~/Music/My Album"
-        lucida-flow sort "~/Music/My Album" --prefix
+        meloflow sort "~/Music/My Album"
+        meloflow sort "~/Music/My Album" --prefix
     """
     from lucida_simple import sort_album_tracks
     
@@ -302,8 +427,8 @@ def fix_order(url, output, discs):
     Use this if tracks were downloaded in wrong order.
     
     Example:
-        lucida-flow fix-order https://tidal.com/album/123456
-        lucida-flow fix-order https://tidal.com/album/123456 --discs 2
+        meloflow fix-order https://tidal.com/album/123456
+        meloflow fix-order https://tidal.com/album/123456 --discs 2
     """
     from lucida_simple import fix_album_track_order
     
@@ -323,7 +448,7 @@ def fix_order(url, output, discs):
     print(f"  {G}{msg}{N}\n")
     
     if count > 0:
-        print(f"  {D}Now run: lucida-flow sort \"{album_dir}\" --prefix{N}\n")
+        print(f"  {D}Now run: meloflow sort \"{album_dir}\" --prefix{N}\n")
 
 
 @cli.command()
@@ -332,8 +457,8 @@ def verify(output):
     """Check downloaded albums for corrupted files
     
     Example:
-        lucida-flow verify
-        lucida-flow verify -o ~/Music
+        meloflow verify
+        meloflow verify -o ~/Music
     """
     from lucida_simple import scan_album_folder, verify_audio_file
     
