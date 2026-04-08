@@ -186,6 +186,8 @@ class DownloadResult:
     skipped: int = 0
 
 def extract_url(url):
+    if 'lucida.to' in url:
+        return url
     m = re.search(r'tidal\.com/album/\d+/track/(\d+)', url)
     if m: return f"https://tidal.com/track/{m.group(1)}"
     m = re.search(r'tidal\.com/track/(\d+)', url)
@@ -607,7 +609,8 @@ def lucida_download(url, out, quality="best", timeout=300, info=True, retries=3,
                 pg = ctx.new_page()
                 
                 p(f"Loading...", "i")
-                pg.goto(f"https://lucida.to/?url={url}", wait_until='domcontentloaded', timeout=60000)
+                goto_url = url if 'lucida.to' in url else f"https://lucida.to/?url={url}"
+                pg.goto(goto_url, wait_until='domcontentloaded', timeout=60000)
                 
                 if not wait_page(pg):
                     pt = pg.title().lower()
