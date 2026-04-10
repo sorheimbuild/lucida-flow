@@ -300,6 +300,45 @@ def search(query, service, output, parallel):
     else:
         show_type = 'both'
     
+    def get_arrow_key():
+        """Get arrow key input, returns 'left', 'right', 'up', 'down', or None"""
+        if sys.platform == 'win32':
+            import msvcrt
+            if sys.stdin.isatty():
+                char = msvcrt.getch()
+                if char == b'\xe0':
+                    char = msvcrt.getch()
+                    if char == b'M': return 'right'
+                    if char == b'K': return 'left'
+                    if char == b'H': return 'up'
+                    if char == b'P': return 'down'
+                elif char == b'r' or char == b'R': return 'r'
+                elif char == b'q' or char == b'Q': return 'q'
+                elif char == b'a' or char == b'A': return 'a'
+                elif char == b't' or char == b'T': return 't'
+                elif char == b'n' or char == b'N': return 'n'
+                elif char == b'f' or char == b'F': return 'f'
+                elif char in b'123456789': return chr(char[0])
+            return None
+        else:
+            import tty, termios, sys
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                char = sys.stdin.read(1)
+                if char == '\x1b':  # Escape sequence
+                    next1 = sys.stdin.read(1)
+                    next2 = sys.stdin.read(1)
+                    if next1 == '[':
+                        if next2 == 'C': return 'right'
+                        if next2 == 'D': return 'left'
+                        if next2 == 'A': return 'up'
+                        if next2 == 'B': return 'down'
+                return char.lower() if char.isalpha() else char
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    
     def display_results(items, page, per_page=10):
         start = (page - 1) * per_page
         end = start + per_page
@@ -320,43 +359,53 @@ def search(query, service, output, parallel):
     def browse_results(items, show_type):
         current_view = show_type
         current_items = items
+        current_page = 1
         
         while True:
-            total_pages = display_results(current_items, 1)
+            total_pages = display_results(current_items, current_page)
             
             if show_type == 'both':
-                print(f"\n  {D}[A]{G} albums {D}| [T]{G} tracks {D}| [N]{G} next {D}| [P]{G} prev {D}| [F]{G} filter {D}| [Q]{G} quit{N}")
-                print(f"  {D}Type number to download | Currently viewing: {G}{current_view.upper()}{N}")
+                print(f"\n  {D}{G}<->{D} arrows to navigate | {G}[A]{D}/{G}[T]{D} albums/tracks | {G}[Q]{D} quit | {G}[F]{D} filter{N}")
+                print(f"  {D}Type number to download | Viewing: {G}{current_view.upper()}{N}")
             else:
-                print(f"\n  {D}[N]{G} next {D}| [P]{G} prev {D}| [Q]{G} quit {D}| [R]{G} new search {D}| [F]{G} filter{N}")
+                print(f"\n  {D}{G}<->{D} arrows to navigate | {G}[Q]{D} quit | {G}[R]{D} restart | {G}[F]{D} filter{N}")
                 print(f"  {D}Type number to download{N}")
             
-            cmd = input(f"\n  {G}Command:{N} ").strip().lower()
+            print(f"\n  {C}Press arrow key, number, or command...{N}")
+            key = get_arrow_key()
             
-            if cmd == 'q':
+            if key == 'q':
                 return
-            elif cmd == 'n':
-                pass  # Will show next page below
-            elif cmd == 'p':
-                pass  # Will show prev page below
-            elif cmd == 'r':
+            elif key == 'r':
                 return 'restart'
-            elif cmd.startswith('filter:') or cmd.startswith('f:'):
-                # Get new search term
-                new_query = cmd.split(':', 1)[1].strip() if ':' in cmd else cmd[2:].strip()
-                if new_query:
-                    return ('filter', new_query)
+            elif key == 'right':
+                if current_page < total_pages:
+                    current_page += 1
                 else:
-                    print(f"  {Y}Usage: filter:<term> or f:<term>{N}")
-            elif cmd == 'a' and show_type == 'both':
+                    print(f"  {Y}Last page{N}")
+            elif key == 'left':
+                if current_page > 1:
+                    current_page -= 1
+                else:
+                    print(f"  {Y}First page{N}")
+            elif key == 'a' and show_type == 'both':
                 current_view = 'albums'
                 current_items = albums
-            elif cmd == 't' and show_type == 'both':
+                current_page = 1
+            elif key == 't' and show_type == 'both':
                 current_view = 'tracks'
                 current_items = tracks
-            elif cmd.isdigit():
+                current_page = 1
+            elif key == 'n':
+                if current_page < total_pages:
+                    current_page += 1
+            elif key == 'p':
+                if current_page > 1:
+                    current_page -= 1
+            elif key and key.isdigit():
                 try:
-                    idx = int(cmd) - 1
+                    start_idx = (current_page - 1) * 10
+                    idx = start_idx + int(key) - 1
                     if 0 <= idx < len(current_items):
                         item = current_items[idx]
                         print(f"\n  {G}Downloading: {item['title']}{N}")
@@ -374,8 +423,10 @@ def search(query, service, output, parallel):
                         input(f"\n  {D}Press Enter to continue...{N}")
                 except:
                     pass
-            else:
-                print(f"  {Y}Unknown command{N}")
+            elif key == 'f' or key == 'filter':
+                cmd = input(f"  {G}Filter term:{N} ").strip()
+                if cmd:
+                    return ('filter', cmd)
     
     while True:
         if show_type == 'albums':
