@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from melo_simple import lucida_download, lucida_download_album, load_history, BANNER, C, G, Y, R, B, D, N, parse_quality_options, check_alternate_services, verify_audio_file, get_existing_files
 
+__version__ = "2.0.0"
 DEFAULT_OUTPUT = os.getenv("DOWNLOAD_DIR", "./downloads")
 
 
@@ -24,7 +25,7 @@ def p(msg, color=""):
 
 
 @click.group(invoke_without_command=True)
-@click.version_option(version="2.0.0", prog_name="meloflow")
+@click.version_option(version=__version__, prog_name="meloflow")
 def cli():
     """Meloflow - Download music from Tidal, Qobuz & more"""
     print(BANNER)
@@ -594,6 +595,134 @@ def verify(output):
         total_corrupt += corrupt
     
     print(f"  {C}Total: {G}{total_valid} valid{N}, {R}{total_corrupt} corrupt{N}\n")
+
+
+@cli.command()
+def update():
+    """Check for updates and upgrade meloflow"""
+    import requests
+    import tempfile
+    import shutil
+    
+    print(f"\n  {C}Meloflow Updater{N}")
+    print(f"  {C}================{N}\n")
+    
+    print(f"  {D}Current version: {__version__}{N}")
+    print(f"  {D}Checking for updates...{N}")
+    
+    try:
+        response = requests.get(
+            "https://api.github.com/repos/sorheimbuild/meloflow/releases/latest",
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            latest_version = data.get("tag_name", "").lstrip("v")
+            latest_version = latest_version if latest_version else __version__
+            
+            print(f"  {D}Latest version: {latest_version}{N}")
+            
+            if latest_version > __version__:
+                print(f"\n  {G}Update available!{N} ({__version__} -> {latest_version})")
+                print(f"\n  {C}Changelog:{N}")
+                body = data.get("body", "No release notes available.")
+                for line in body.split("\n")[:15]:
+                    if line.strip():
+                        print(f"    {line}")
+                
+                print(f"\n")
+                choice = input(f"  {G}Upgrade now? [y/N]: {N}").strip().lower()
+                
+                if choice == 'y':
+                    print(f"\n  {C}Downloading update...{N}")
+                    
+                    assets = data.get("assets", [])
+                    source_url = None
+                    
+                    for asset in assets:
+                        if "meloflow.py" in asset.get("name", ""):
+                            source_url = asset.get("browser_download_url")
+                            break
+                    
+                    if not source_url:
+                        print(f"\n  {Y}No binary found. Please download manually from GitHub.{N}")
+                        print(f"  {D}{data.get('html_url', 'https://github.com/sorheimbuild/meloflow/releases')}{N}")
+                        return
+                    
+                    download_path = Path.home() / ".meloflow" / "meloflow.py"
+                    download_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    with requests.get(source_url, stream=True, timeout=30) as r:
+                        r.raise_for_status()
+                        with open(download_path, 'wb') as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                    
+                    scripts_path = Path.home() / "AppData" / "Local" / "Python" / "pythoncore-3.14-64" / "Scripts" / "meloflow.py"
+                    if scripts_path.exists():
+                        shutil.copy(download_path, scripts_path)
+                    
+                    print(f"\n  {G}Updated to {latest_version}!{N}")
+                    print(f"  {D}Run 'meloflow --version' to verify.{N}")
+                else:
+                    print(f"\n  {D}Update skipped.{N}")
+            else:
+                print(f"\n  {G}You're up to date! ({__version__}){N}")
+        else:
+            print(f"\n  {Y}Could not check for updates (status: {response.status_code}){N}")
+    
+    except Exception as e:
+        print(f"\n  {Y}Update check failed: {e}{N}")
+        print(f"  {D}Visit: https://github.com/sorheimbuild/meloflow/releases{N}")
+    
+    print()
+
+
+@cli.command()
+def changelog():
+    """Show the latest release changelog"""
+    import requests
+    
+    print(f"\n  {C}Meloflow Changelog{N}")
+    print(f"  {C}==================={N}\n")
+    
+    try:
+        response = requests.get(
+            "https://api.github.com/repos/sorheimbuild/meloflow/releases/latest",
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            version = data.get("tag_name", "").lstrip("v")
+            name = data.get("name", version)
+            body = data.get("body", "No release notes available.")
+            published = data.get("published_at", "")[:10] if data.get("published_at") else "Unknown"
+            
+            print(f"  {B}{C}v{version}{N} - {name}")
+            print(f"  {D}Released: {published}{N}\n")
+            
+            print(f"  {C}Changes:{N}")
+            lines = body.split("\n")
+            for line in lines:
+                stripped = line.strip()
+                if stripped:
+                    if stripped.startswith("#"):
+                        print(f"\n  {G}{stripped}{N}")
+                    elif stripped.startswith("-"):
+                        print(f"  {stripped}")
+                    else:
+                        print(f"  {stripped}")
+            print()
+        else:
+            print(f"  {Y}Could not fetch changelog (status: {response.status_code}){N}")
+    
+    except Exception as e:
+        print(f"  {Y}Failed to fetch changelog: {e}{N}")
+        print(f"  {D}Visit: https://github.com/sorheimbuild/meloflow/releases{N}\n")
+    
+    print()
 
 
 if __name__ == "__main__": cli()
