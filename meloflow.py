@@ -247,6 +247,7 @@ def search(query, service, output, parallel):
         meloflow search "Get Lucky" -s tidal
     """
     from melo_simple import search_lucida, SERVICES, lucida_download, lucida_download_album
+    import sys
     
     print(f"\n  {C}Search Music{N}")
     print(f"  {C}================{N}\n")
@@ -257,13 +258,12 @@ def search(query, service, output, parallel):
             print(f"\n  {Y}No query entered{N}\n")
             return
     
-    print(f"  {D}Services:{N}")
     service_list = list(SERVICES.items())
-    for i, (key, name) in enumerate(service_list, 1):
-        marker = " {D}(default){N}" if key == service else ""
-        print(f"    {G}{i}.{N} {name}{marker}")
-    
     if service not in SERVICES:
+        print(f"  {D}Services:{N}")
+        for i, (key, name) in enumerate(service_list, 1):
+            marker = " {D}(default){N}" if key == "tidal" else ""
+            print(f"    {G}{i}.{N} {name}{marker}")
         try:
             choice = input(f"\n  {G}Select service (1-{len(service_list)}): {N}").strip()
             if choice:
@@ -271,7 +271,7 @@ def search(query, service, output, parallel):
                 if 0 <= idx < len(service_list):
                     service = service_list[idx][0]
         except ValueError:
-            pass
+            service = "tidal"
     
     print(f"\n  {C}Searching for: {B}{query}{N} on {SERVICES.get(service, service)}...")
     
@@ -281,81 +281,103 @@ def search(query, service, output, parallel):
         print(f"\n  {Y}No results found{N}\n")
         return
     
-    print(f"\n  {G}Found {len(results)} results:{N}\n")
-    
     albums = [r for r in results if r['type'] == 'Album']
     tracks = [r for r in results if r['type'] == 'Track']
     
-    print(f"  {C}Albums ({len(albums)}):{N}")
-    for i, r in enumerate(albums, 1):
-        print(f"    {G}{i}.{N} {B}{r['title']}{N}")
+    print(f"\n  {G}Found {len(results)} results ({len(albums)} albums, {len(tracks)} tracks){N}")
     
-    print(f"\n  {C}Tracks ({len(tracks)}):{N}")
-    start_idx = len(albums)
-    for i, r in enumerate(tracks, start_idx + 1):
-        print(f"    {G}{i}.{N} {r['title']}")
+    print(f"\n  {C}What are you looking for?{N}")
+    print(f"    {G}[1]{N} Tracks")
+    print(f"    {G}[2]{N} Albums")
+    print(f"    {G}[3]{N} Both")
     
-    print(f"\n  {D}Enter numbers to download (e.g., 1,3,5 or 1-3 or 'a' for all albums, 't' for all tracks){N}")
-    choice = input(f"  {G}Your selection:{N} ").strip()
+    mode_choice = input(f"\n  {G}Enter choice (1-3): {N}").strip()
     
-    if not choice:
-        return
-    
-    to_download = []
-    
-    if choice.lower() == 'a':
-        to_download = albums
-    elif choice.lower() == 't':
-        to_download = tracks
+    if mode_choice == '1':
+        show_type = 'tracks'
+    elif mode_choice == '2':
+        show_type = 'albums'
     else:
-        all_results = albums + tracks
-        parts = choice.replace(',', ' ').split()
-        for part in parts:
-            if '-' in part:
-                start, end = part.split('-')
-                try:
-                    to_download.extend(all_results[int(start)-1:int(end)])
-                except: pass
-            else:
-                try:
-                    to_download.append(all_results[int(part)-1])
-                except: pass
+        show_type = 'both'
     
-    if not to_download:
-        print(f"\n  {Y}No valid selection{N}\n")
-        return
-    
-    print(f"\n  {C}Downloading {len(to_download)} items...{N}\n")
-    
-    os.makedirs(output, exist_ok=True)
-    completed, failed = 0, 0
-    
-    for item in to_download:
-        url = item['url']
-        is_album = item['type'] == 'Album'
+    def display_results(items, page, per_page=10):
+        start = (page - 1) * per_page
+        end = start + per_page
+        page_items = items[start:end]
+        total_pages = max(1, (len(items) + per_page - 1) // per_page)
         
-        print(f"  {G}->{N} {item['title']} ({item['type']})")
+        print(f"\n  {D}Showing {start+1}-{min(end, len(items))} of {len(items)} | Page {page}/{total_pages}{N}")
         
-        try:
-            if is_album:
-                result = lucida_download_album(url, output, parallel=parallel, create_zip=False)
+        for i, r in enumerate(page_items):
+            idx = start + i + 1
+            if r['type'] == 'Album':
+                print(f"    {G}{idx}.{N} {B}{r['title']}{N} {D}[Album]{N}")
             else:
-                result = lucida_download(url, output)
+                print(f"    {G}{idx}.{N} {r['title']}")
+        
+        return total_pages
+    
+    def browse_results(items, show_type):
+        current_view = show_type
+        current_items = items
+        
+        while True:
+            total_pages = display_results(current_items, 1)
             
-            if result.success:
-                completed += 1
-                print(f"    {G}+ Downloaded{N}")
+            if show_type == 'both':
+                print(f"\n  {D}[A]{G} albums {D}| [T]{G} tracks {D}| [N]{G} next {D}| [P]{G} prev {D}| [Q]{G} quit{N}")
+                print(f"  {D}Type number to download | Currently viewing: {G}{current_view.upper()}{N}")
             else:
-                failed += 1
-                print(f"    {R}x Failed{N}")
-        except Exception as e:
-            failed += 1
-            print(f"    {R}x Error: {e}{N}")
+                print(f"\n  {D}[N]{G} next {D}| [P]{G} prev {D}| [Q]{G} quit {D}| [R]{G} new search{N}")
+                print(f"  {D}Type number to download{N}")
+            
+            cmd = input(f"\n  {G}Command:{N} ").strip().lower()
+            
+            if cmd == 'q':
+                return
+            elif cmd == 'n':
+                pass  # Will show next page below
+            elif cmd == 'p':
+                pass  # Will show prev page below
+            elif cmd == 'r':
+                return 'restart'
+            elif cmd == 'a' and show_type == 'both':
+                current_view = 'albums'
+                current_items = albums
+            elif cmd == 't' and show_type == 'both':
+                current_view = 'tracks'
+                current_items = tracks
+            elif cmd.isdigit():
+                try:
+                    idx = int(cmd) - 1
+                    if 0 <= idx < len(current_items):
+                        item = current_items[idx]
+                        print(f"\n  {G}Downloading: {item['title']}{N}")
+                        try:
+                            if item['type'] == 'Album':
+                                result = lucida_download_album(item['url'], output, parallel=parallel, create_zip=False)
+                            else:
+                                result = lucida_download(item['url'], output)
+                            if result.success:
+                                print(f"  {G}+ Downloaded!{N}")
+                            else:
+                                print(f"  {R}x Failed{N}")
+                        except Exception as e:
+                            print(f"  {R}x Error: {e}{N}")
+                        input(f"\n  {D}Press Enter to continue...{N}")
+                except:
+                    pass
+            else:
+                print(f"  {Y}Unknown command{N}")
     
-    print(f"\n  {C}========================================{N}")
-    print(f"  {G}+ Completed: {completed}{N}")
-    if failed: print(f"  {R}x Failed: {failed}{N}")
-    print()
+    if show_type == 'albums':
+        browse_results(albums, 'albums')
+    elif show_type == 'tracks':
+        browse_results(tracks, 'tracks')
+    else:
+        browse_results(albums, 'both')
+    
+    print(f"\n  {C}Done!{N}\n")
 
 
 @cli.command()

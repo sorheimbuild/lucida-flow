@@ -70,10 +70,20 @@ def search_lucida(query, service='tidal', country='US'):
     
     search_input.fill(query)
     page.keyboard.press('Enter')
-    time.sleep(8)
+    
+    # Wait for navigation or content change
+    try:
+        page.wait_for_load_state('networkidle', timeout=15000)
+    except:
+        pass
+    time.sleep(3)
     
     results = []
-    links = page.query_selector_all('a')
+    try:
+        links = page.query_selector_all('a')
+    except:
+        time.sleep(2)
+        links = page.query_selector_all('a')
     seen_urls = set()
     
     for link in links:
