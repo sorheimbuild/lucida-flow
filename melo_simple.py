@@ -20,16 +20,70 @@ def normalize_text(s):
 
 
 STEALTH_SCRIPT = """
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-window.navigator.chrome = { runtime: {} };
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-chrome.runtime && chrome.runtime.connect && chrome.runtime.connect();
+// Remove automation flags
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined, configurable: true});
+
+// Canvas fingerprint protection
+const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+HTMLCanvasElement.prototype.toDataURL = function(type) {
+    const result = toDataURL.apply(this, arguments);
+    return result;
+};
+
+// WebGL fingerprint protection  
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.apply(this, arguments);
+};
+
+// Add realistic plugins
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [1, 2, 3, 4, 5, 6],
+    configurable: true
+});
+
+// Add realistic languages
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US', 'en', 'en-GB'],
+    configurable: true
+});
+
+// Hardware concurrency
+Object.defineProperty(navigator, 'hardwareConcurrency', {
+    get: () => [4, 8][Math.floor(Math.random() * 2)],
+    configurable: true
+});
+
+// Device memory
+Object.defineProperty(navigator, 'deviceMemory', {
+    get: () => [4, 8][Math.floor(Math.random() * 2)],
+    configurable: true
+});
+
+// Chrome runtime
+window.navigator.chrome = { 
+    runtime: {}, 
+    loadTime: 1.23456789,
+    app: { InstallState: 'ok', RunningState: 'can_run' }
+};
+
+// Remove CDP detection variables
+window.cdc_adoQpoasnfa76pfcZLmcfl_Array = undefined;
+window.cdc_adoQpoasnfa76pfcZLmcfl_Promise = undefined;
+window.cdc_adoQpoasnfa76pfcZLmcfl_Proxy = undefined;
 """
 
 def apply_stealth(context):
-    """Inject stealth scripts to avoid detection"""
+    """Inject stealth scripts and use playwright-stealth"""
     context.add_init_script(STEALTH_SCRIPT)
+    
+    try:
+        from playwright_stealth import stealth
+        stealth(context)
+    except Exception:
+        pass
 
 
 SERVICES = {
@@ -44,18 +98,40 @@ SERVICES = {
 def search_lucida(query, service='tidal', country='US'):
     """Search lucida.to for tracks and albums"""
     from playwright.sync_api import sync_playwright
+    import random
+    
+    # Randomize viewport
+    viewports = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900)]
+    viewport = random.choice(viewports)
+    
+    # Randomize timezone and locale
+    timezones = ['America/New_York', 'America/Los_Angeles', 'America/Chicago', 'Europe/London', 'Asia/Tokyo']
+    locales = ['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en-US,en;q=0.8']
     
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=True, args=BROWSER_ARGS)
     ctx = browser.new_context(
         accept_downloads=True,
         user_agent=USER_AGENT,
+        viewport={'width': viewport[0], 'height': viewport[1]},
+        locale=random.choice(locales),
+        timezone_id=random.choice(timezones),
+        permissions=['geolocation'],
     )
     apply_stealth(ctx)
     page = ctx.new_page()
     
     page.goto('https://lucida.to', wait_until='domcontentloaded', timeout=30000)
-    time.sleep(3)
+    
+    # Wait for Cloudflare challenge to pass
+    for _ in range(60):
+        title = page.title().lower()
+        content = page.content().lower()
+        if 'just a moment' not in title and 'cloudflare' not in title:
+            break
+        time.sleep(1)
+    
+    time.sleep(2)
     
     select = page.query_selector('select')
     if select:
@@ -150,8 +226,28 @@ BANNER = f"""
    {D}Tidal • Qobuz • Spotify • More{N}            
 {N}"""
 
-BROWSER_ARGS = ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage', '--no-sandbox']
-USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+BROWSER_ARGS = [
+    '--disable-blink-features=AutomationControlled',
+    '--disable-dev-shm-usage', 
+    '--no-sandbox',
+    '--disable-web-security',
+    '--disable-features=IsolateOrigins,site-per-process',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-extensions',
+    '--disable-default-apps',
+    '--disable-popup-blocking',
+]
+
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6167.85 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.91 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.69 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+]
+
+import random
+USER_AGENT = random.choice(USER_AGENTS)
 
 def p(msg, s="i"):
     icons = {"i": f"{C}*{N}", "s": f"{G}+{N}", "w": f"{Y}!{N}", "e": f"{R}x{N}", "d": f"{M}>{N}"}
@@ -461,15 +557,35 @@ def show_history(n=10):
         print(f"  {D}{ts}{N} {icon} {fn}{fmt}{sz}")
     print()
 
-def wait_page(page, mx=60):
+def wait_page(page, mx=150):
+    # Wait longer and be more careful about Cloudflare challenges
     for i in range(mx):
         time.sleep(1)
-        pt, pc = page.title().lower(), page.content().lower()
-        if 'cloudflare' in pt or 'checking your browser' in pt: continue
-        if 'cf-challenge' in pc and 'checking your browser' in pc: continue
-        if 'access denied' in pc or pt == 'access denied': return False
-        if 'lucida' in pt and 'music at internet speed' not in pt: time.sleep(2); return True
-        if 'music at internet speed' in pt: return False
+        pt = page.title().lower()
+        content = page.content().lower()
+        
+        # Clear block detection
+        if 'access denied' in content or pt == 'access denied':
+            return False
+        
+        # Cloudflare challenge detection - wait for it to pass
+        if 'just a moment' in pt or 'checking your browser' in content or 'cf-challenge' in content:
+            if i % 5 == 0:
+                print(f"  {D}Waiting for Cloudflare challenge...{N}")
+            continue
+        
+        # Check if we're past Cloudflare and on the actual page
+        if len(content) > 25000:
+            # Additional check - make sure it's not still a challenge page
+            if 'just a moment' not in content and 'cloudflare' not in pt:
+                time.sleep(2)
+                return True
+            elif 'lucida' in content or 'download' in content:
+                time.sleep(2)
+                return True
+        
+        if i % 15 == 0 and i > 0:
+            print(f"  {D}Waiting for page... ({i}s){N}")
     return False
 
 def find_btn(page, mx=5):
@@ -612,15 +728,38 @@ def lucida_download(url, out, quality="best", timeout=300, info=True, retries=3,
         if retries > 1: p(f"Attempt {attempt}/{retries}...", "i")
         
         try:
+            from playwright.sync_api import sync_playwright
+            import random
+            
+            viewports = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900), (1280, 720)]
+            viewport = random.choice(viewports)
+            timezones = ['America/New_York', 'America/Los_Angeles', 'America/Chicago', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo', 'Asia/Singapore']
+            locales = ['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en-US,en;q=0.8', 'en-CA,en;q=0.9']
+            
             with sync_playwright() as pwr:
                 br = pwr.chromium.launch(headless=True, args=BROWSER_ARGS)
-                ctx = br.new_context(accept_downloads=True, user_agent=USER_AGENT, viewport={'width': 1920, 'height': 1080})
+                ctx = br.new_context(
+                    accept_downloads=True, 
+                    user_agent=USER_AGENT, 
+                    viewport={'width': viewport[0], 'height': viewport[1]},
+                    locale=random.choice(locales),
+                    timezone_id=random.choice(timezones),
+                    permissions=['geolocation'],
+                )
                 apply_stealth(ctx)
                 pg = ctx.new_page()
                 
                 p(f"Loading...", "i")
                 goto_url = url if 'lucida.to' in url else f"https://lucida.to/?url={url}"
                 pg.goto(goto_url, wait_until='domcontentloaded', timeout=60000)
+                
+                # Wait for Cloudflare
+                for _ in range(90):
+                    title = pg.title().lower()
+                    content = pg.content().lower()
+                    if 'just a moment' not in title and 'cloudflare' not in title:
+                        break
+                    time.sleep(1)
                 
                 if not wait_page(pg):
                     pt = pg.title().lower()
@@ -1004,11 +1143,21 @@ def fix_album_track_order(album_dir, album_url, num_discs=None):
     
     existing_urls = set(manifest.keys())
     
+    import random
+    viewports = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900), (1280, 720)]
+    viewport = random.choice(viewports)
+    timezones = ['America/New_York', 'America/Los_Angeles', 'America/Chicago', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo', 'Asia/Singapore']
+    locales = ['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en-US,en;q=0.8', 'en-CA,en;q=0.9']
+    
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=True, args=BROWSER_ARGS)
     context = browser.new_context(
         accept_downloads=True,
         user_agent=USER_AGENT,
+        viewport={'width': viewport[0], 'height': viewport[1]},
+        locale=random.choice(locales),
+        timezone_id=random.choice(timezones),
+        permissions=['geolocation'],
     )
     apply_stealth(context)
     page = context.new_page()
@@ -1152,6 +1301,12 @@ def lucida_download_album(url, out, quality="best", timeout=300, parallel=2, ret
     """Download all tracks from an album - optimized for light resource usage"""
     from playwright.sync_api import sync_playwright
     
+    import random
+    viewports = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900), (1280, 720)]
+    viewport = random.choice(viewports)
+    timezones = ['America/New_York', 'America/Los_Angeles', 'America/Chicago', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo', 'Asia/Singapore']
+    locales = ['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en-US,en;q=0.8', 'en-CA,en;q=0.9']
+    
     os.makedirs(out, exist_ok=True)
     
     print(f"\n  {C}->{N} Album URL: {D}{url}{N}\n")
@@ -1165,12 +1320,24 @@ def lucida_download_album(url, out, quality="best", timeout=300, parallel=2, ret
     context = browser.new_context(
         accept_downloads=True,
         user_agent=USER_AGENT,
+        viewport={'width': viewport[0], 'height': viewport[1]},
+        locale=random.choice(locales),
+        timezone_id=random.choice(timezones),
+        permissions=['geolocation'],
     )
     apply_stealth(context)
     page = context.new_page()
     
     p("Loading album page...", "i")
     page.goto(f"https://lucida.to/?url={url}", wait_until='domcontentloaded', timeout=60000)
+    
+    # Wait for Cloudflare
+    for _ in range(90):
+        title = page.title().lower()
+        content = page.content().lower()
+        if 'just a moment' not in title and 'cloudflare' not in title:
+            break
+        time.sleep(1)
     
     if not wait_page(page):
         browser.close()
@@ -1329,6 +1496,7 @@ def lucida_download_album(url, out, quality="best", timeout=300, parallel=2, ret
 
 def download_single_track_worker(args):
     """Worker function for parallel track download"""
+    import random
     i, track, album_dir, timeout, retries, existing_files = args
     
     track_url = track['url']
@@ -1349,6 +1517,12 @@ def download_single_track_worker(args):
                     print(f"\n  {Y}!{N} Corrupted existing: {fname} - will re-download")
     
     from playwright.sync_api import sync_playwright
+    
+    viewports = [(1920, 1080), (1366, 768), (1536, 864), (1440, 900), (1280, 720)]
+    viewport = random.choice(viewports)
+    timezones = ['America/New_York', 'America/Los_Angeles', 'America/Chicago', 'Europe/London', 'Europe/Paris', 'Asia/Tokyo', 'Asia/Singapore']
+    locales = ['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en-US,en;q=0.8', 'en-CA,en;q=0.9']
+    
     pw = sync_playwright().start()
     browser = pw.chromium.launch(
         headless=True,
@@ -1357,6 +1531,10 @@ def download_single_track_worker(args):
     context = browser.new_context(
         accept_downloads=True,
         user_agent=USER_AGENT,
+        viewport={'width': viewport[0], 'height': viewport[1]},
+        locale=random.choice(locales),
+        timezone_id=random.choice(timezones),
+        permissions=['geolocation'],
     )
     apply_stealth(context)
     
@@ -1447,6 +1625,14 @@ def download_single_track(url, out, quality, timeout, retries, context):
             
             lucida_url = f"https://lucida.to/?url={url}"
             page.goto(lucida_url, wait_until='domcontentloaded', timeout=60000)
+            
+            # Wait for Cloudflare
+            for _ in range(90):
+                title = page.title().lower()
+                content = page.content().lower()
+                if 'just a moment' not in title and 'cloudflare' not in title:
+                    break
+                time.sleep(1)
             
             if not wait_page(page):
                 page.close()
